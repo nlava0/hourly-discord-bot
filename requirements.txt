@@ -1,2 +1,2 @@
-discord.py[voice]>=2.5,<3
+nextcord[voice]
 APScheduler>=3.10,<4

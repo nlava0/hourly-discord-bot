@@ -1,16 +1,22 @@
 
 import os
 import asyncio
+import math
+import struct
 from pathlib import Path
 
-import discord
-from discord.ext import commands
+import nextcord
+from nextcord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 TOKEN = os.getenv("BOT_TOKEN")
-AUDIO_FILE = Path(__file__).parent / "Top of the hour.mp3-enhanced-v2.mp3"
 
-intents = discord.Intents.default()
+AUDIO_FILE = (
+    Path(__file__).parent
+    / "Top of the hour.mp3-enhanced-v2.mp3"
+)
+
+intents = nextcord.Intents.default()
 intents.guilds = True
 intents.voice_states = True
 intents.message_content = True
@@ -20,57 +26,106 @@ scheduler = AsyncIOScheduler()
 play_lock = asyncio.Lock()
 
 
-def active_voice_channel(guild):
-    choices = []
+class TestTone(nextcord.AudioSource):
+    def __init__(self, duration=5, frequency=440):
+        self.frame_number = 0
+        self.total_frames = duration * 50
+        self.frequency = frequency
+
+    def read(self):
+        if self.frame_number >= self.total_frames:
+            return b""
+
+        samples = bytearray()
+
+        for i in range(960):
+            position = self.frame_number * 960 + i
+
+            value = int(
+                14000 * math.sin(
+                    2 * math.pi * self.frequency
+                    * position / 48000
+                )
+            )
+
+            samples.extend(struct.pack("<hh", value, value))
+
+        self.frame_number += 1
+        return bytes(samples)
+
+    def is_opus(self):
+        return False
+
+
+def find_channel(guild):
+    channels = []
 
     for channel in guild.voice_channels:
-        humans = [member for member in channel.members if not member.bot]
+        count = sum(
+            1 for member in channel.members
+            if not member.bot
+        )
 
-        if humans:
-            choices.append((len(humans), channel))
+        if count > 0:
+            channels.append((count, channel))
 
-    return max(choices, key=lambda x: x[0])[1] if choices else None
+    if not channels:
+        return None
+
+    return max(channels, key=lambda item: item[0])[1]
 
 
-async def play_in_channel(channel):
+async def play_audio(channel, tone=False):
     async with play_lock:
         voice = None
         finished = asyncio.Event()
         loop = asyncio.get_running_loop()
 
         try:
-            if not AUDIO_FILE.is_file():
-                print(f"ERROR: Audio file missing: {AUDIO_FILE}")
-                return
-
-            print(f"Audio file: {AUDIO_FILE.name}")
             print(f"Connecting to {channel.name}...")
 
-            voice = await channel.connect(timeout=20, reconnect=True)
-            print("Voice connected.")
-
-            # Use PCM audio instead of FFmpeg Opus output
-            source = discord.FFmpegPCMAudio(
-                str(AUDIO_FILE),
-                executable="ffmpeg",
-                options="-vn"
+            voice = await channel.connect(
+                timeout=20,
+                reconnect=True
             )
 
-            def after_play(error):
-                print(f"Player callback: {error!r}")
+            print("Connected using Nextcord.")
+            print("Nextcord version:", nextcord.__version__)
+            print("Encryption mode:", getattr(voice, "mode", None))
+
+            if tone:
+                source = TestTone(duration=5)
+                print("Playing 5-second test tone...")
+            else:
+                if not AUDIO_FILE.is_file():
+                    print("Missing audio file:", AUDIO_FILE)
+                    return
+
+                source = nextcord.FFmpegPCMAudio(
+                    str(AUDIO_FILE),
+                    executable="ffmpeg",
+                    options="-vn"
+                )
+
+                print("Playing MP3:", AUDIO_FILE.name)
+
+            def playback_finished(error):
+                print("Playback callback:", repr(error))
                 loop.call_soon_threadsafe(finished.set)
 
-            voice.play(source, after=after_play)
+            voice.play(source, after=playback_finished)
+
             print("Playback started.")
 
-            await asyncio.wait_for(finished.wait(), timeout=45)
-            print("Playback ended.")
+            await asyncio.wait_for(
+                finished.wait(),
+                timeout=45
+            )
 
-        except asyncio.TimeoutError:
-            print("ERROR: Playback timed out.")
+            print("Playback finished.")
 
-        except Exception as exc:
-            print(f"VOICE/PLAYBACK ERROR: {exc!r}")
+        except Exception as error:
+            print("ERROR:", repr(error))
 
         finally:
             if voice:
@@ -83,12 +138,10 @@ async def play_in_channel(channel):
 
 async def hourly_job():
     for guild in bot.guilds:
-        channel = active_voice_channel(guild)
+        channel = find_channel(guild)
 
         if channel:
-            await play_in_channel(channel)
-        else:
-            print(f"No people in voice channels in {guild.name}")
+            await play_audio(channel)
 
 
 @bot.event
@@ -112,33 +165,50 @@ async def on_ready():
     print("Hourly scheduler active.")
 
 
+def target_channel(ctx):
+    if ctx.author.voice:
+        return ctx.author.voice.channel
+
+    return find_channel(ctx.guild)
+
+
 @bot.command()
 async def test(ctx):
-    await ctx.send("Testing sound...")
-
-    if ctx.author.voice and ctx.author.voice.channel:
-        channel = ctx.author.voice.channel
-    else:
-        channel = active_voice_channel(ctx.guild)
+    channel = target_channel(ctx)
 
     if not channel:
-        await ctx.send("Nobody is in a voice channel.")
+        await ctx.send("Join a voice channel first.")
         return
 
-    await play_in_channel(channel)
+    await ctx.send("Testing MP3 with Nextcord...")
+    await play_audio(channel)
+
+
+@bot.command()
+async def testtone(ctx):
+    channel = target_channel(ctx)
+
+    if not channel:
+        await ctx.send("Join a voice channel first.")
+        return
+
+    await ctx.send("Testing Nextcord audio for 5 seconds...")
+    await play_audio(channel, tone=True)
 
 
 @bot.command()
 async def where(ctx):
-    channel = active_voice_channel(ctx.guild)
+    channel = find_channel(ctx.guild)
 
     if channel:
-        await ctx.send(f"I would play in **{channel.name}**.")
+        await ctx.send(f"I would play in {channel.name}.")
     else:
-        await ctx.send("No voice channel currently has a human member.")
+        await ctx.send("Nobody is in voice chat.")
 
 
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is missing.")
+    raise RuntimeError(
+        "BOT_TOKEN environment variable is missing."
+    )
 
 bot.run(TOKEN)

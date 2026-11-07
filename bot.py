@@ -180,7 +180,7 @@ async def test(ctx):
         await ctx.send("Join a voice channel first.")
         return
 
-    await ctx.send("Testing MP3 with Nextcord...")
+    await ctx.send("It's the top of the hour!")
     await play_audio(channel)
 
 
@@ -192,7 +192,7 @@ async def testtone(ctx):
         await ctx.send("Join a voice channel first.")
         return
 
-    await ctx.send("Testing Nextcord audio for 5 seconds...")
+    await ctx.send("Wake up time!")
     await play_audio(channel, tone=True)
 
 

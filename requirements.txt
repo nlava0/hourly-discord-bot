@@ -1,1 +1,2 @@
-discord.py[voice]>=2.5,<3\nAPScheduler>=3.10,<4\n
+discord.py[voice]>=2.5,<3
+APScheduler>=3.10,<4

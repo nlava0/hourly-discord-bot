@@ -26,7 +26,7 @@ NARUTO_AUDIO = (
     FOLDER / "Nartuto Filler.mp3"
 )
 
-NARUTO_PEOPLE_REQUIRED = 4
+NARUTO_PEOPLE_REQUIRED = 5
 
 
 # =====================================
